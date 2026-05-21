@@ -232,16 +232,22 @@ func (g *Game) listenWebSocket() {
 func startWebServer(g *Game, startPort int) int {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		data, err := os.ReadFile("dashboard.html")
-		if err != nil {
-			log.Printf("Failed to read dashboard.html: %v\n", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
+	// Static file server for SVG and other assets
+	fs := http.FileServer(http.Dir("."))
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			data, err := os.ReadFile("dashboard.html")
+			if err != nil {
+				log.Printf("Failed to read dashboard.html: %v\n", err)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			w.Write(data)
+		} else {
+			fs.ServeHTTP(w, r)
 		}
-		w.Write(data)
-	})
+	}))
 
 	mux.HandleFunc("/api/data", func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
