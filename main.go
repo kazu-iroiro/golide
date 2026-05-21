@@ -367,6 +367,9 @@ func startWebServer(g *Game, startPort int) int {
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"comments_archive.csv\"")
 
+		// UTF-8 BOMを出力
+		w.Write([]byte{0xEF, 0xBB, 0xBF})
+
 		fmt.Fprintln(w, "Time,Comment")
 		for _, entry := range g.archive {
 			escapedComment := strings.ReplaceAll(entry.Comment, "\"", "\"\"")
