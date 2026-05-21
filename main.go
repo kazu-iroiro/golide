@@ -151,14 +151,14 @@ func (g *Game) listenWebSocket() {
 
 		url := fmt.Sprintf("wss://bolide.digicre.net/api/v1/room/%s", currentRoom)
 
-		log.Printf("ルーム [%s] の WebSocketに接続を試みています...\n", currentRoom)
+		log.Printf("Info: Trying to connect to WebSocket for room [%s]...\n", currentRoom)
 		connectTime := time.Now()
 
 		c, _, err := websocket.DefaultDialer.Dial(url, nil)
 		if err != nil {
-			log.Printf("WebSocket接続エラー: %v\n", err)
+			log.Printf("Error: WebSocket connection failed: %v\n", err)
 		} else {
-			log.Println("WebSocketに接続しました！")
+			log.Println("Info: Successfully connected to WebSocket!")
 			g.mu.Lock()
 			g.wsConn = c
 			g.mu.Unlock()
@@ -166,13 +166,13 @@ func (g *Game) listenWebSocket() {
 			for {
 				_, message, err := c.ReadMessage()
 				if err != nil {
-					log.Printf("WebSocket切断または部屋移動: %v\n", err)
+					log.Printf("Error: WebSocket disconnected or room moved: %v\n", err)
 					break
 				}
 
 				var wsMsg WsMessage
 				if err := json.Unmarshal(message, &wsMsg); err != nil {
-					log.Println("JSONパースエラー:", err)
+					log.Println("Error: Failed to parse JSON:", err)
 					continue
 				}
 
@@ -211,16 +211,16 @@ func (g *Game) listenWebSocket() {
 		g.mu.Unlock()
 
 		if roomChanged {
-			log.Println("部屋名が変更されたため、即時再接続します。")
+			log.Println("Info: Room name has been changed. Reconnecting...")
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 
 		if elapsed < reconnectShortSpan {
-			log.Printf("エラー/切断のスパンが短いため、%v 間待機します...\n", reconnectWaitTime)
+			log.Printf("Error: WebSocket disconnected too quickly. Waiting for %v...\n", reconnectWaitTime)
 			time.Sleep(reconnectWaitTime)
 		} else {
-			log.Println("再接続を開始します...")
+			log.Println("Info: Starting reconnection...")
 			time.Sleep(1 * time.Second)
 		}
 	}
@@ -228,7 +228,6 @@ func (g *Game) listenWebSocket() {
 
 // --- Webダッシュボード（GUI）関連の処理 ---
 
-// ★ startWebServer は空いているポートを探してサーバーを起動し、確定したポート番号を返します
 func startWebServer(g *Game, startPort int) int {
 	mux := http.NewServeMux()
 
@@ -239,7 +238,7 @@ func startWebServer(g *Game, startPort int) int {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			data, err := os.ReadFile("dashboard.html")
 			if err != nil {
-				log.Printf("Failed to read dashboard.html: %v\n", err)
+				log.Printf("Error: Failed to read dashboard.html: %v\n", err)
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}
@@ -309,14 +308,14 @@ func startWebServer(g *Game, startPort int) int {
 				g.mplusNormalFont = newFace
 				g.fontSize = req.Size
 			} else {
-				log.Printf("フォントサイズ変更エラー: %v\n", err)
+				log.Printf("Error: Failed to change font size: %v\n", err)
 			}
 		}
 
 		oldRoom := g.roomName
 		g.roomName = req.Room
 		if oldRoom != req.Room {
-			log.Printf("ルーム設定が変更されました [%s -> %s]。\n", oldRoom, req.Room)
+			log.Printf("Info: Room settings have been changed [%s -> %s].\n", oldRoom, req.Room)
 			if g.wsConn != nil {
 				g.wsConn.Close()
 			}
@@ -347,11 +346,11 @@ func startWebServer(g *Game, startPort int) int {
 			oldRoom := g.roomName
 			g.roomName = ""
 			if oldRoom != "" && g.wsConn != nil {
-				log.Println("ユーザー操作によりWebSocketを切断し、待機状態に移行します。")
+				log.Println("Info: Transitioning to idle state.")
 				g.wsConn.Close()
 			}
 		} else if req.Action == "quit" {
-			log.Println("GUIウィンドウが閉じられたか、終了ボタンが押されたためアプリを終了します。")
+			log.Println("Info: Quitting the application.")
 			g.shouldQuit = true
 		}
 		g.mu.Unlock()
@@ -381,38 +380,32 @@ func startWebServer(g *Game, startPort int) int {
 	var err error
 	actualPort := startPort
 
-	// ★ 最大100個のポートを順に試して、空いているものを探す
 	for i := 0; i < 100; i++ {
 		addr := fmt.Sprintf("127.0.0.1:%d", actualPort)
 		listener, err = net.Listen("tcp", addr)
 		if err == nil {
-			break // 空いているポートが見つかった
+			break
 		}
-		log.Printf("ポート %d は使用中のため、次のポートを試します...", actualPort)
+		log.Printf("port: %d is in use. Trying the next port.", actualPort)
 		actualPort++
 	}
 
 	if err != nil {
-		log.Fatalf("利用可能なポートが見つかりませんでした: %v", err)
+		log.Fatalf("Not found available ports: %v", err)
 	}
 
-	log.Printf("Webダッシュボードがローカル限定で起動しました: http://127.0.0.1:%d\n", actualPort)
+	log.Printf("Web UI is Running: http://127.0.0.1:%d\n", actualPort)
 
-	// HTTPサーバーを別ゴルーチンで起動
 	go func() {
 		if err := http.Serve(listener, mux); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Webサーバーの起動に失敗しました: %v", err)
+			log.Fatalf("Failed to start HTTP server: %v", err)
 		}
 	}()
 
-	return actualPort // 確定したポート番号を返す
+	return actualPort
 }
 
-// GUI用HTML
-// dashboardHTML は dashboard.html から読み込まれます
-
 // --- ユーティリティ・パース関連 ---
-
 func parseHexColor(s string) (c color.RGBA, err error) {
 	c.A = 0xff
 	if s[0] == '#' {
@@ -475,7 +468,7 @@ func openAppWindow(url string) {
 	}
 
 	if err != nil {
-		log.Printf("アプリウィンドウの起動に失敗しました。通常のブラウザで %s を開きます。", url)
+		log.Printf("Failed to open application window. Opening %s in the default browser.", url)
 		switch runtime.GOOS {
 		case "linux":
 			exec.Command("xdg-open", url).Start()
@@ -488,12 +481,12 @@ func openAppWindow(url string) {
 }
 
 func main() {
-	roomPtr := flag.String("room", "", "接続するルーム名 (未指定の場合はブラウザ設定画面が自動で開きます)")
+	roomPtr := flag.String("room", "", "接続するルーム名")
 	sizePtr := flag.Int("size", 24, "フォントの大きさ")
 	speedPtr := flag.Float64("speed", 3.0, "文字が進む基本速度")
-	colorsPtr := flag.String("colors", "#FFFFFF,#FF0000,#FFFF00,#00FF00,#00FFFF,#FF00FF", "文字色 (カンマ区切りで複数指定可能)")
+	colorsPtr := flag.String("colors", "#FFFFFF,#FF0000,#FFFF00,#00FF00,#00FFFF,#FF00FF", "文字色")
 	outlinePtr := flag.String("outline", "none", "文字の縁取り色 (none, black, white, または16進数)")
-	webPortPtr := flag.Int("port", 8080, "Webダッシュボードの開始ポート番号")
+	webPortPtr := flag.Int("port", 8080, "Web UIのポート番号")
 
 	flag.Parse()
 
@@ -520,7 +513,7 @@ func main() {
 
 	fontBytes, err := os.ReadFile("MPLUS1p-Bold.ttf")
 	if err != nil {
-		log.Fatalf("フォントファイルの読み込みに失敗しました: %v", err)
+		log.Fatalf("Error: Failed to read font file: %v", err)
 	}
 	tt, err := opentype.Parse(fontBytes)
 	if err != nil {
@@ -552,13 +545,11 @@ func main() {
 
 	go game.listenWebSocket()
 
-	// ★ 同期的に起動して、空いていた確定ポート番号を受け取る
 	actualPort := startWebServer(game, *webPortPtr)
 
 	if *roomPtr == "" {
 		go func() {
 			time.Sleep(500 * time.Millisecond)
-			// ★ 確定した実際のポート番号を使ってブラウザを開く
 			openAppWindow(fmt.Sprintf("http://127.0.0.1:%d", actualPort))
 		}()
 	}
