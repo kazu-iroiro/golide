@@ -152,9 +152,21 @@
         .archive-header { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 15px; flex-wrap: wrap; }
         .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 15px; }
         .panel-header h3 { margin: 0; font-size: 22px; }
+        
+        /* 最小化・最大化アニメーション */
+        .panel > form,
+        .panel > div[id="room-warning"] {
+            max-height: 1000px;
+            opacity: 1;
+            overflow: hidden;
+            transition: max-height 0.4s ease-in-out, opacity 0.4s ease-in-out;
+        }
+        
         .panel.minimized > form,
         .panel.minimized > div[id="room-warning"] {
-            display: none;
+            max-height: 0;
+            opacity: 0;
+            pointer-events: none;
         }
 
         /* ----- ここからレスポンシブ対応 ----- */
