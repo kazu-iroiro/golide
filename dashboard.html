@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Comment Viewer Dashboard</title>
+    <style>
+        body { font-family: sans-serif; background: #f4f4f9; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { font-size: 24px; border-bottom: 2px solid #ddd; padding-bottom: 10px; margin-top: 0; }
+        .panels { display: flex; gap: 20px; margin-bottom: 20px; }
+        .panel { flex: 1; background: #fdfdfd; padding: 15px; border-radius: 6px; border: 1px solid #e0e0e0; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-weight: bold; margin-bottom: 4px; font-size: 14px; }
+        .form-group input[type="text"], .form-group input[type="number"] { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+        .btn { display: inline-block; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; border: none; cursor: pointer; font-size: 14px; text-align: center; }
+        .btn:hover { background: #0056b3; }
+        .btn-secondary { background: #28a745; margin-bottom: 15px; }
+        .btn-secondary:hover { background: #218838; }
+        .btn-small { padding: 4px 8px; font-size: 12px; background: #6c757d; }
+        .btn-small:hover { background: #5a6268; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; font-size: 14px; }
+        th { background-color: #f8f9fa; }
+        .log-container { max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; }
+        
+        .floating-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #28a745;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            display: none;
+            z-index: 9999;
+            animation: slideIn 0.3s ease-out, slideOut 0.3s ease-out 3.7s forwards;
+        }
+        
+        .floating-notification.show {
+            display: block;
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+        }
+        
+        .color-picker-wrapper { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+        .color-picker-wrapper input[type="color"] { width: 40px; height: 30px; padding: 0; border: 1px solid #ccc; cursor: pointer; }
+        .remove-color-btn { background: none; border: none; color: #dc3545; cursor: pointer; font-weight: bold; font-size: 16px; }
+        .attention { color: #dc3545; font-weight: bold; margin-bottom: 15px; }
+        .action-buttons { display: flex; gap: 10px; margin-top: 20px; padding-top: 15px; border-top: 1px solid #ddd; }
+        .panel:nth-child(2) { display: none; }
+        #btn-quit { display: none; }
+        #btn-minimize { white-space: nowrap; padding: 10px 15px; }
+        .archive-header { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-top: 20px; }
+        .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+        .panel-header h3 { margin: 0; }
+        .panel.minimized > form,
+        .panel.minimized > div[id="room-warning"] {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Golide Web Front</h1>
+        
+        <div class="panels">
+            <div class="panel">
+                <div class="panel-header">
+                    <h3 style="margin-top:0;">各種設定</h3>
+                    <button type="button" id="btn-minimize" class="btn" style="background: #6c757d; white-space: nowrap; padding: 10px 15px;">−</button>
+                </div>
+                <div id="room-warning" class="attention" style="display:none;">現在ルーム名が設定されていません。入力して適用してください。</div>
+                <form id="settings-form">
+                    <div class="form-group">
+                        <label>ルーム名 (必須)</label>
+                        <input type="text" id="input-room" placeholder="例: event_room_2026" required>
+                    </div>
+                    <div class="form-group">
+                        <label>基本速度</label>
+                        <input type="number" id="input-speed" step="0.1" min="0.5" required>
+                    </div>
+                    <div class="form-group">
+                        <label>フォントサイズ</label>
+                        <input type="number" id="input-size" min="10" max="100" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>文字色 (複数追加するとランダムに選ばれます)</label>
+                        <div id="text-colors-container" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        </div>
+                        <button type="button" id="btn-add-color" class="btn btn-small">+ 色を追加</button>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>縁取り色</label>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <label style="font-weight: normal; margin: 0; display: flex; align-items: center; gap: 4px;">
+                                <input type="checkbox" id="input-outline-enable"> 有効にする
+                            </label>
+                            <input type="color" id="input-outline-color" value="#000000" style="width: 50px; height: 30px; padding: 0; border: 1px solid #ccc; cursor: pointer;">
+                        </div>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px; margin-top: 10px;">
+                        <button type="submit" class="btn" style="flex: 1;">設定をアプリに適用</button>
+                        <button type="button" id="btn-reset-settings" class="btn" style="background: #dc3545; white-space: nowrap; padding: 10px 15px;">リセット</button>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <button type="button" id="btn-disconnect" class="btn" style="background: #ffc107; color: #212529; width: 100%;">⏸ 通信を切断</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="archive-header">
+            <h2 style="margin: 0; flex-grow: 1;">受信アーカイブ (自動更新)</h2>
+            <a href="/export" class="btn btn-secondary" style="margin: 0;">コメントログをCSVでダウンロード</a>
+        </div>
+        <div class="log-container">
+            <table>
+                <thead>
+                    <tr><th style="width: 170px;">受信時刻</th><th>コメント</th></tr>
+                </thead>
+                <tbody id="log-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const STORAGE_KEY = 'comment_viewer_settings';
+        const colorsContainer = document.getElementById('text-colors-container');
+        let isFirstLoad = true;
+
+        function addColorPicker(colorHex) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'color-picker-wrapper';
+
+            const input = document.createElement('input');
+            input.type = 'color';
+            input.value = colorHex || '#ffffff';
+            input.className = 'text-color-input';
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'remove-color-btn';
+            removeBtn.textContent = '×';
+            removeBtn.title = '削除';
+            
+            removeBtn.onclick = () => {
+                if (document.querySelectorAll('.text-color-input').length > 1) {
+                    wrapper.remove();
+                } else {
+                    alert('最低1つの色は必要です');
+                }
+            };
+
+            wrapper.appendChild(input);
+            wrapper.appendChild(removeBtn);
+            colorsContainer.appendChild(wrapper);
+        }
+
+        document.getElementById('btn-add-color').addEventListener('click', () => {
+            addColorPicker('#ffffff');
+        });
+
+        document.getElementById('btn-reset-settings').addEventListener('click', () => {
+            if (confirm('すべての設定をリセットしますか？\nローカルストレージの設定が削除され、アプリを再起動時にデフォルト値に戻ります。')) {
+                localStorage.removeItem(STORAGE_KEY);
+                location.reload();
+            }
+        });
+
+        function getColorsString() {
+            const pickers = document.querySelectorAll('.text-color-input');
+            return Array.from(pickers).map(p => p.value).join(',');
+        }
+
+        function setColorsFromString(colorStr) {
+            colorsContainer.innerHTML = '';
+            const colors = colorStr.split(',');
+            colors.forEach(c => {
+                const hex = c.trim();
+                if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
+                    addColorPicker(hex);
+                } else {
+                    addColorPicker('#ffffff');
+                }
+            });
+            if (colorsContainer.innerHTML === '') addColorPicker('#ffffff');
+        }
+
+        function formatHexColor(val) {
+            if (val === 'black') return '#000000';
+            if (val === 'white') return '#ffffff';
+            if (/^#[0-9a-fA-F]{6}$/.test(val)) return val;
+            return '#000000';
+        }
+
+        function saveSettingsToStorage() {
+            const settings = {
+                speed: document.getElementById('input-speed').value,
+                size: document.getElementById('input-size').value,
+                colors: getColorsString(),
+                outlineEnable: document.getElementById('input-outline-enable').checked,
+                outlineColor: document.getElementById('input-outline-color').value
+            };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+        }
+
+        function loadSettingsFromStorage() {
+            const data = localStorage.getItem(STORAGE_KEY);
+            if (data) {
+                try {
+                    const settings = JSON.parse(data);
+                    if (settings.speed) document.getElementById('input-speed').value = settings.speed;
+                    if (settings.size) document.getElementById('input-size').value = settings.size;
+                    if (settings.colors) setColorsFromString(settings.colors);
+                    
+                    if (settings.outlineEnable !== undefined) {
+                        document.getElementById('input-outline-enable').checked = settings.outlineEnable;
+                        document.getElementById('input-outline-color').value = settings.outlineColor || '#000000';
+                    }
+                    return true;
+                } catch (e) {
+                    console.error('LocalStorageの読み込みに失敗しました:', e);
+                }
+            }
+            return false;
+        }
+
+        async function fetchData() {
+            try {
+                const res = await fetch('/api/data');
+                const data = await res.json();
+                
+                document.getElementById('current-room').textContent = data.room || "未設定 (通信待機中)";
+                document.getElementById('current-speed').textContent = data.speed;
+                document.getElementById('current-size').textContent = data.size;
+                document.getElementById('current-colors').textContent = data.colors;
+                document.getElementById('current-outline').textContent = data.outline;
+
+                if (isFirstLoad) {
+                    document.getElementById('input-room').value = data.room;
+                    
+                    if (!data.room) {
+                        document.getElementById('room-warning').style.display = 'block';
+                    }
+
+                    const loaded = loadSettingsFromStorage();
+                    if (!loaded) {
+                        document.getElementById('input-speed').value = data.speed;
+                        document.getElementById('input-size').value = data.size;
+                        setColorsFromString(data.colors);
+                        
+                        if (data.outline === 'none' || data.outline === '') {
+                            document.getElementById('input-outline-enable').checked = false;
+                            document.getElementById('input-outline-color').value = '#000000';
+                        } else {
+                            document.getElementById('input-outline-enable').checked = true;
+                            document.getElementById('input-outline-color').value = formatHexColor(data.outline);
+                        }
+                    }
+                    isFirstLoad = false;
+                } else if (data.room) {
+                    document.getElementById('room-warning').style.display = 'none';
+                    if (document.activeElement !== document.getElementById('input-room') && data.room !== "") {
+                        document.getElementById('input-room').value = data.room;
+                    }
+                }
+
+                const tbody = document.getElementById('log-body');
+                tbody.innerHTML = '';
+                data.archive.slice().reverse().forEach(entry => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = '<td>' + entry.time + '</td><td>' + entry.comment + '</td>';
+                    tbody.appendChild(tr);
+                });
+            } catch (err) {
+                console.error("データの取得に失敗しました", err);
+            }
+        }
+
+        document.getElementById('settings-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const outlineEnable = document.getElementById('input-outline-enable').checked;
+            const outlineValue = outlineEnable ? document.getElementById('input-outline-color').value : 'none';
+
+            const payload = {
+                room: document.getElementById('input-room').value,
+                speed: parseFloat(document.getElementById('input-speed').value),
+                size: parseInt(document.getElementById('input-size').value, 10),
+                colors: getColorsString(),
+                outline: outlineValue
+            };
+
+            try {
+                const res = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (res.ok) {
+                    saveSettingsToStorage();
+                    const notification = document.getElementById('floating-notification');
+                    notification.classList.add('show');
+                    setTimeout(() => notification.classList.remove('show'), 4000);
+                    fetchData();
+                }
+            } catch (err) {
+                alert("設定の適用に失敗しました");
+            }
+        });
+
+        document.getElementById('btn-disconnect').addEventListener('click', async () => {
+            if(confirm("WebSocket通信を切断し、待機状態にしますか？\n(再開するには再度ルーム名を適用してください)")) {
+                await fetch('/api/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'disconnect' })
+                });
+                document.getElementById('input-room').value = "";
+                fetchData();
+            }
+        });
+
+        document.getElementById('btn-minimize').addEventListener('click', () => {
+            const panel = document.querySelector('.panel');
+            const btn = document.getElementById('btn-minimize');
+            panel.classList.toggle('minimized');
+            btn.textContent = panel.classList.contains('minimized') ? '+' : '−';
+        });
+
+
+        window.addEventListener('beforeunload', () => {
+            const data = JSON.stringify({ action: 'quit' });
+            const blob = new Blob([data], { type: 'application/json' });
+            navigator.sendBeacon('/api/action', blob);
+        });
+
+        fetchData();
+        setInterval(fetchData, 2000);
+    </script>
+    
+    <div id="floating-notification" class="floating-notification">設定を適用・保存しました！</div>
+</body>
+</html>
