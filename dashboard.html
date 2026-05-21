@@ -245,7 +245,7 @@
             <div class="right-col panel">
                 <div class="archive-header">
                     <h3 style="margin: 0; font-size: 22px;">Comments</h3>
-                    <a href="/export" class="btn btn-secondary btn-small" style="margin: 0; padding: 6px 12px;">CSVダウンロード</a>
+                    <button id="btn-csv-export" class="btn btn-secondary btn-small" style="margin: 0; padding: 6px 12px;">CSVダウンロード</button>
                 </div>
                 <div class="log-container">
                     <table>
@@ -266,6 +266,7 @@
         const STORAGE_KEY = 'comment_viewer_settings';
         const colorsContainer = document.getElementById('text-colors-container');
         let isFirstLoad = true;
+        let isDownloading = false;
 
         function addColorPicker(colorHex) {
             const wrapper = document.createElement('div');
@@ -462,10 +463,47 @@
             btn.textContent = panel.classList.contains('minimized') ? '+' : '−';
         });
 
+        document.getElementById('btn-csv-export').addEventListener('click', async () => {
+            // ダウンロード中フラグを立てる
+            isDownloading = true;
+            
+            try {
+                // CSVをfetchで取得
+                const response = await fetch('/export');
+                if (!response.ok) {
+                    throw new Error('CSV export failed');
+                }
+                
+                // Blobに変換
+                const blob = await response.blob();
+                
+                // Blob URLを作成してダウンロード
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'comments_archive.csv';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                window.URL.revokeObjectURL(url);
+                
+                console.log('CSV download completed');
+            } catch (err) {
+                console.error('CSV download error:', err);
+                alert('CSVダウンロードに失敗しました');
+            } finally {
+                // ダウンロード完了後にフラグをリセット
+                isDownloading = false;
+            }
+        });
+
         window.addEventListener('beforeunload', () => {
-            const data = JSON.stringify({ action: 'quit' });
-            const blob = new Blob([data], { type: 'application/json' });
-            navigator.sendBeacon('/api/action', blob);
+            // ダウンロード中はquitを送らない
+            if (!isDownloading) {
+                const data = JSON.stringify({ action: 'quit' });
+                const blob = new Blob([data], { type: 'application/json' });
+                navigator.sendBeacon('/api/action', blob);
+            }
         });
 
         fetchData();
