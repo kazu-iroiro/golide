@@ -9,7 +9,6 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -232,11 +231,11 @@ func startWebServer(g *Game, startPort int) int {
 	mux := http.NewServeMux()
 
 	// Static file server for SVG and other assets
-	fs := http.FileServer(http.Dir("."))
+	embeddedFS := http.FileServer(http.FS(embedFS))
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			data, err := os.ReadFile("dashboard.html")
+			data, err := embedFS.ReadFile("dashboard.html")
 			if err != nil {
 				log.Printf("Error: Failed to read dashboard.html: %v\n", err)
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -244,7 +243,7 @@ func startWebServer(g *Game, startPort int) int {
 			}
 			w.Write(data)
 		} else {
-			fs.ServeHTTP(w, r)
+			embeddedFS.ServeHTTP(w, r)
 		}
 	}))
 
@@ -511,7 +510,7 @@ func main() {
 		}
 	}
 
-	fontBytes, err := os.ReadFile("MPLUS1p-Bold.ttf")
+	fontBytes, err := embedFS.ReadFile("MPLUS1p-Bold.ttf")
 	if err != nil {
 		log.Fatalf("Error: Failed to read font file: %v", err)
 	}
