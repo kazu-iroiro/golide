@@ -23,13 +23,13 @@
 ### Goを自分でビルドする場合
 
 ``` sh
-go build -o main.exe main.go
+go build -o main.exe
 ```
 
 ### Goを実行するだけの場合
 
 ``` sh
-go run main.go
+go run main.go embeds.go
 ```
 
 ## 実行時のオプション
@@ -41,7 +41,7 @@ go run main.go
 または
 
 ``` sh
-go run main.go -h
+go run main.go embeds.go -h
 ```
 
 から閲覧できます。
