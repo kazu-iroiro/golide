@@ -481,10 +481,10 @@ func openAppWindow(url string) {
 
 func main() {
 	roomPtr := flag.String("room", "", "接続するルーム名")
-	sizePtr := flag.Int("size", 24, "フォントの大きさ")
-	speedPtr := flag.Float64("speed", 3.0, "文字が進む基本速度")
+	sizePtr := flag.Int("size", 48, "フォントの大きさ")
+	speedPtr := flag.Float64("speed", 4.0, "文字が進む基本速度")
 	colorsPtr := flag.String("colors", "#FFFFFF,#FF0000,#FFFF00,#00FF00,#00FFFF,#FF00FF", "文字色")
-	outlinePtr := flag.String("outline", "none", "文字の縁取り色 (none, black, white, または16進数)")
+	outlinePtr := flag.String("outline", "black", "文字の縁取り色 (none, black, white, または16進数)")
 	webPortPtr := flag.Int("port", 8080, "Web UIのポート番号")
 
 	flag.Parse()
