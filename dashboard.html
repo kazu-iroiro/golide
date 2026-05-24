@@ -7,7 +7,6 @@
         html, body { height: 100%; margin: 0; }
         body { font-family: sans-serif; background: #f4f4f9; color: #333; padding: 0; display: flex; flex-direction: column; }
         
-        /* 全体のコンテナ枠 */
         .container { 
             height: 100%;
             margin: 0 auto; 
@@ -20,7 +19,6 @@
             box-sizing: border-box;
         }
 
-        /* タイトル部分 */
         h1 { 
             display: flex; 
             align-items: baseline; 
@@ -35,13 +33,7 @@
             height: 96px;
             vertical-align: middle;
         }
-        .title-sub { 
-            font-size: 18px; 
-            font-weight: normal; 
-            color: #333; 
-        }
 
-        /* 左右2カラムレイアウト */
         .main-layout { 
             display: flex; 
             gap: 30px; 
@@ -50,14 +42,12 @@
             min-height: 0;
         }
         .left-col { 
-            /* widthで幅を完全固定し、flexによる自動調整を無効化 */
             width: calc(45% - 15px); 
             flex: none;
             display: flex; 
             flex-direction: column; 
         }
         .right-col { 
-            /* widthで幅を完全固定し、flexによる自動調整を無効化 */
             width: calc(55% - 15px);
             flex: none;
             display: flex; 
@@ -65,7 +55,6 @@
             min-height: 0;
         }
 
-        /* 各パネルの枠線デザイン */
         .panel { 
             background: #fff; 
             padding: 20px; 
@@ -78,7 +67,7 @@
 
         .form-group { margin-bottom: 12px; }
         .form-group label { display: block; font-weight: bold; margin-bottom: 4px; font-size: 14px; }
-        .form-group input[type="text"], .form-group input[type="number"] { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+        .form-group input[type="text"], .form-group input[type="number"], .form-group select { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
         
         .btn { display: inline-block; padding: 10px 20px; background: #1ad313; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; border: none; cursor: pointer; font-size: 14px; text-align: center; }
         .btn:hover { background: #196b00; }
@@ -87,19 +76,18 @@
         .btn-small { padding: 4px 8px; font-size: 12px; background: #6c757d; }
         .btn-small:hover { background: #5a6268; }
 
-        /* テーブル（コメント一覧）のスタイル調整 */
         table { 
             width: 100%; 
             border-collapse: collapse; 
             margin-top: 10px; 
-            table-layout: fixed; /* ★追加：中身によらず表の列幅を固定する */
+            table-layout: fixed; 
         }
         th, td { 
             padding: 10px; 
             text-align: left; 
             font-size: 14px; 
             border: none; 
-            word-wrap: break-word; /* ★追加：長いコメントが来ても強制改行してはみ出させない */
+            word-wrap: break-word; 
             overflow-wrap: break-word; 
         }
         th { 
@@ -107,7 +95,6 @@
             font-weight: bold; 
             font-size: 16px;
         }
-        /* TIMEの列幅固定 */
         th:first-child, td:first-child { 
             border-right: 2px solid #e0e0e0; 
             width: 100px; 
@@ -153,7 +140,6 @@
         .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 15px; }
         .panel-header h3 { margin: 0; font-size: 22px; }
         
-        /* 最小化・最大化アニメーション */
         .panel > form,
         .panel > div[id="room-warning"] {
             max-height: 1000px;
@@ -169,7 +155,8 @@
             pointer-events: none;
         }
 
-        /* ----- ここからレスポンシブ対応 ----- */
+        .status-info { font-size: 13px; margin-top: 15px; padding-top: 10px; border-top: 1px solid #eee; }
+
         @media (max-width: 768px) {
             body { padding: 10px; }
             .container { padding: 15px; }
@@ -179,7 +166,7 @@
                 gap: 20px;
             }
             .left-col, .right-col {
-                width: 100%; /* スマホ等の縦並び時は100%に固定 */
+                width: 100%;
                 flex: none;
             }
             .log-container { max-height: 400px; }
@@ -189,7 +176,7 @@
 <body>
     <div class="container">
         <h1>
-            <img src="golide.svg" alt="Golide Logo" class="title-logo">
+            <img src="golide.svg" alt="Golide Logo" class="title-logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';"><span style="display:none; font-size:32px; font-weight:bold;">Comment Viewer</span>
         </h1>
         
         <div class="main-layout">
@@ -206,6 +193,26 @@
                             <label>ルーム名</label>
                             <input type="text" id="input-room" placeholder="例: event_room_2026" required>
                         </div>
+                        
+                        <div class="form-group">
+                            <label>表示ディスプレイ</label>
+                            <select id="input-display" required>
+                                <option value="all">すべてのディスプレイを横断</option>
+                            </select>
+                        </div>
+                        
+                        <div style="display: flex; gap: 10px; margin-bottom: 12px; display: none;">
+                            <div class="form-group" style="flex:1; margin-bottom: 0;">
+                                <label>X位置調整</label>
+                                <input type="number" id="input-offset-x" value="0">
+                            </div>
+                            <div class="form-group" style="flex:1; margin-bottom: 0;">
+                                <label>Y位置調整</label>
+                                <input type="number" id="input-offset-y" value="0">
+                            </div>
+                        </div>
+                        <p style="font-size: 11px; color: #666; margin-top: -5px; margin-bottom: 15px; display: none;">※モニター配置が「横一列」でない場合や、微妙にずれる場合はここで微調整してください。</p>
+
                         <div class="form-group">
                             <label>基本速度</label>
                             <input type="number" id="input-speed" step="0.1" min="0.5" required>
@@ -237,6 +244,10 @@
                         </div>
                         <div style="margin-top: 10px;">
                             <button type="button" id="btn-disconnect" class="btn" style="background: #ffc107; color: #212529; width: 100%;">⏸ 通信を切断</button>
+                        </div>
+
+                        <div class="status-info">
+                            <strong>現在の表示モード:</strong> <span id="current-display">-</span>
                         </div>
                     </form>
                 </div>
@@ -339,7 +350,10 @@
                 size: document.getElementById('input-size').value,
                 colors: getColorsString(),
                 outlineEnable: document.getElementById('input-outline-enable').checked,
-                outlineColor: document.getElementById('input-outline-color').value
+                outlineColor: document.getElementById('input-outline-color').value,
+                display: document.getElementById('input-display').value,
+                offsetX: document.getElementById('input-offset-x').value,
+                offsetY: document.getElementById('input-offset-y').value
             };
             localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
         }
@@ -351,6 +365,9 @@
                     const settings = JSON.parse(data);
                     if (settings.speed) document.getElementById('input-speed').value = settings.speed;
                     if (settings.size) document.getElementById('input-size').value = settings.size;
+                    if (settings.display) document.getElementById('input-display').value = settings.display;
+                    if (settings.offsetX !== undefined) document.getElementById('input-offset-x').value = settings.offsetX;
+                    if (settings.offsetY !== undefined) document.getElementById('input-offset-y').value = settings.offsetY;
                     if (settings.colors) setColorsFromString(settings.colors);
                     
                     if (settings.outlineEnable !== undefined) {
@@ -377,10 +394,24 @@
                         document.getElementById('room-warning').style.display = 'block';
                     }
 
+                    const selectDisplay = document.getElementById('input-display');
+                    selectDisplay.innerHTML = '<option value="all">すべてのディスプレイを横断</option>';
+                    if (data.monitors) {
+                        data.monitors.forEach(m => {
+                            const opt = document.createElement('option');
+                            opt.value = m.id;
+                            opt.textContent = m.name;
+                            selectDisplay.appendChild(opt);
+                        });
+                    }
+
                     const loaded = loadSettingsFromStorage();
                     if (!loaded) {
                         document.getElementById('input-speed').value = data.speed;
                         document.getElementById('input-size').value = data.size;
+                        document.getElementById('input-display').value = data.display;
+                        document.getElementById('input-offset-x').value = data.offsetX || 0;
+                        document.getElementById('input-offset-y').value = data.offsetY || 0;
                         setColorsFromString(data.colors);
                         
                         if (data.outline === 'none' || data.outline === '') {
@@ -398,6 +429,9 @@
                         document.getElementById('input-room').value = data.room;
                     }
                 }
+
+                let displayLabel = data.display === 'all' ? "すべてのディスプレイを横断" : `ディスプレイ ${parseInt(data.display) + 1}`;
+                document.getElementById('current-display').textContent = displayLabel;
 
                 const tbody = document.getElementById('log-body');
                 tbody.innerHTML = '';
@@ -422,7 +456,10 @@
                 speed: parseFloat(document.getElementById('input-speed').value),
                 size: parseInt(document.getElementById('input-size').value, 10),
                 colors: getColorsString(),
-                outline: outlineValue
+                outline: outlineValue,
+                display: document.getElementById('input-display').value,
+                offsetX: parseInt(document.getElementById('input-offset-x').value, 10) || 0,
+                offsetY: parseInt(document.getElementById('input-offset-y').value, 10) || 0
             };
 
             try {
@@ -464,20 +501,14 @@
         });
 
         document.getElementById('btn-csv-export').addEventListener('click', async () => {
-            // ダウンロード中フラグを立てる
             isDownloading = true;
-            
             try {
-                // CSVをfetchで取得
                 const response = await fetch('/export');
                 if (!response.ok) {
                     throw new Error('CSV export failed');
                 }
                 
-                // Blobに変換
                 const blob = await response.blob();
-                
-                // Blob URLを作成してダウンロード
                 const url = window.URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.href = url;
@@ -492,13 +523,11 @@
                 console.error('CSV download error:', err);
                 alert('CSVダウンロードに失敗しました');
             } finally {
-                // ダウンロード完了後にフラグをリセット
                 isDownloading = false;
             }
         });
 
         window.addEventListener('beforeunload', () => {
-            // ダウンロード中はquitを送らない
             if (!isDownloading) {
                 const data = JSON.stringify({ action: 'quit' });
                 const blob = new Blob([data], { type: 'application/json' });

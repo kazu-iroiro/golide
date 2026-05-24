@@ -53,6 +53,9 @@ type SettingsRequest struct {
 	Speed   float64 `json:"speed"`
 	Colors  string  `json:"colors"`
 	Outline string  `json:"outline"`
+	Display string  `json:"display"`
+	WindowX int     `json:"windowX"` // OSに対するウィンドウの開始X座標
+	WindowY int     `json:"windowY"` // OSに対するウィンドウの開始Y座標
 }
 
 type Game struct {
@@ -71,16 +74,98 @@ type Game struct {
 	rawColorsString  string
 	rawOutlineString string
 
-	shouldQuit bool
+	// ディスプレイ制御
+	displayMode string
+	windowX     int // Ebitengineの原点誤認を補正するためのOS座標
+	windowY     int
+	totalW      int // 全モニターを覆うピッタリの横幅
+	maxH        int // 全モニターを覆うピッタリの高さ
+
+	// ウィンドウ内部における論理的な描画領域（クリッピング）
+	clipX, clipY float64
+	clipW, clipH float64
+
+	updateDisplay bool
+	shouldQuit    bool
+}
+
+// アプリ起動時に1度だけ、全画面をピッタリ覆うウィンドウサイズを計算する
+func (g *Game) initWindowSize() {
+	mons := ebiten.AppendMonitors(nil)
+	if len(mons) == 0 {
+		g.totalW, g.maxH = 1920, 1080
+		return
+	}
+
+	totalWidth := 0
+	maxHeight := 0
+	for _, m := range mons {
+		w, h := m.Size()
+		totalWidth += w
+		if h > maxHeight {
+			maxHeight = h
+		}
+	}
+	g.totalW = totalWidth
+	g.maxH = maxHeight
+}
+
+// 選択されたディスプレイに応じて、ウィンドウ内部の描画領域を論理的に切り替える
+func (g *Game) applyLogicalClip() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	mons := ebiten.AppendMonitors(nil)
+	if len(mons) == 0 {
+		return
+	}
+
+	if g.displayMode == "all" {
+		// 全てのディスプレイを横断
+		g.clipX = 0
+		g.clipY = 0
+		g.clipW = float64(g.totalW)
+		g.clipH = float64(g.maxH)
+	} else {
+		// 特定のディスプレイ（例: 0番目、1番目）
+		var selIdx int
+		fmt.Sscanf(g.displayMode, "%d", &selIdx)
+		if selIdx < 0 || selIdx >= len(mons) {
+			selIdx = 0
+		}
+
+		// 選択されたディスプレイまでの横幅を合計し、描画開始X座標(clipX)とする
+		startX := 0
+		for i := 0; i < selIdx; i++ {
+			w, _ := mons[i].Size()
+			startX += w
+		}
+		mw, mh := mons[selIdx].Size()
+
+		g.clipX = float64(startX)
+		g.clipY = 0
+		g.clipW = float64(mw)
+		g.clipH = float64(mh)
+	}
 }
 
 func (g *Game) Update() error {
 	g.mu.Lock()
 	quit := g.shouldQuit
+	updateDisp := g.updateDisplay
+	if updateDisp {
+		g.updateDisplay = false
+	}
 	g.mu.Unlock()
 
 	if quit || ebiten.IsKeyPressed(ebiten.KeyEscape) {
 		return ebiten.Termination
+	}
+
+	// UIからの変更検知時、OSウィンドウの配置と内部クリッピングを更新
+	if updateDisp {
+		ebiten.SetWindowPosition(g.windowX, g.windowY)
+		g.applyLogicalClip()
 	}
 
 	g.mu.Lock()
@@ -89,14 +174,14 @@ func (g *Game) Update() error {
 	activeComments := g.comments[:0]
 	for _, c := range g.comments {
 		c.X -= c.Speed
-
 		textWidth := float64(len([]rune(c.Text)) * g.fontSize)
-		if c.X+textWidth > 0 {
+
+		// ウィンドウ内部の論理的な左端（clipX）を越えるまで生存させる
+		if c.X+textWidth > g.clipX {
 			activeComments = append(activeComments, c)
 		}
 	}
 	g.comments = activeComments
-
 	return nil
 }
 
@@ -116,20 +201,19 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			text.Draw(screen, c.Text, g.mplusNormalFont, x-1, y, g.outlineColor)
 			text.Draw(screen, c.Text, g.mplusNormalFont, x+1, y, g.outlineColor)
 		}
-
 		text.Draw(screen, c.Text, g.mplusNormalFont, int(c.X), int(c.Y), c.Color)
 	}
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
-	return outsideWidth, outsideHeight
+	// ebiten側から算出したピッタリのサイズを維持する
+	return g.totalW, g.maxH
 }
 
 func sanitizeComment(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\t", " ")
-
 	if utf8.RuneCountInString(s) > maxCommentLength {
 		runes := []rune(s)
 		s = string(runes[:maxCommentLength]) + "..."
@@ -142,22 +226,16 @@ func (g *Game) listenWebSocket() {
 		g.mu.Lock()
 		currentRoom := g.roomName
 		g.mu.Unlock()
-
 		if currentRoom == "" {
 			time.Sleep(1 * time.Second)
 			continue
 		}
 
 		url := fmt.Sprintf("wss://bolide.digicre.net/api/v1/room/%s", currentRoom)
-
-		log.Printf("Info: Trying to connect to WebSocket for room [%s]...\n", currentRoom)
-		connectTime := time.Now()
-
 		c, _, err := websocket.DefaultDialer.Dial(url, nil)
 		if err != nil {
-			log.Printf("Error: WebSocket connection failed: %v\n", err)
+			log.Printf("Error: %v\n", err)
 		} else {
-			log.Println("Info: Successfully connected to WebSocket!")
 			g.mu.Lock()
 			g.wsConn = c
 			g.mu.Unlock()
@@ -165,354 +243,228 @@ func (g *Game) listenWebSocket() {
 			for {
 				_, message, err := c.ReadMessage()
 				if err != nil {
-					log.Printf("Error: WebSocket disconnected or room moved: %v\n", err)
 					break
 				}
-
 				var wsMsg WsMessage
-				if err := json.Unmarshal(message, &wsMsg); err != nil {
-					log.Println("Error: Failed to parse JSON:", err)
-					continue
-				}
+				json.Unmarshal(message, &wsMsg)
 
 				cleanComment := sanitizeComment(wsMsg.Comment)
 				if strings.TrimSpace(cleanComment) == "" {
 					continue
 				}
 
-				w, h := ebiten.WindowSize()
-
 				g.mu.Lock()
 				nowStr := time.Now().Format("2006-01-02 15:04:05")
 				g.archive = append(g.archive, LogEntry{Time: nowStr, Comment: cleanComment})
 
-				randomOffset := rand.Float64() * 2.0
-				actualSpeed := g.baseSpeed + randomOffset
-				selectedColor := g.fontColors[rand.Intn(len(g.fontColors))]
+				yRange := int(g.clipH) - g.fontSize*2
+				if yRange <= 0 {
+					yRange = 1
+				}
 
 				newComment := Comment{
 					Text:  cleanComment,
-					X:     float64(w),
-					Y:     float64(rand.Intn(h-g.fontSize*2) + g.fontSize),
-					Speed: actualSpeed,
-					Color: selectedColor,
+					X:     g.clipX + g.clipW, // 論理的な右端からスタート
+					Y:     g.clipY + float64(rand.Intn(yRange)) + float64(g.fontSize),
+					Speed: g.baseSpeed + rand.Float64()*2.0,
+					Color: g.fontColors[rand.Intn(len(g.fontColors))],
 				}
 				g.comments = append(g.comments, newComment)
 				g.mu.Unlock()
 			}
 			c.Close()
 		}
-
-		elapsed := time.Since(connectTime)
-
-		g.mu.Lock()
-		roomChanged := g.roomName != currentRoom
-		g.mu.Unlock()
-
-		if roomChanged {
-			log.Println("Info: Room name has been changed. Reconnecting...")
-			time.Sleep(500 * time.Millisecond)
-			continue
-		}
-
-		if elapsed < reconnectShortSpan {
-			log.Printf("Error: WebSocket disconnected too quickly. Waiting for %v...\n", reconnectWaitTime)
-			time.Sleep(reconnectWaitTime)
-		} else {
-			log.Println("Info: Starting reconnection...")
-			time.Sleep(1 * time.Second)
-		}
+		time.Sleep(1 * time.Second)
 	}
 }
-
-// --- Webダッシュボード（GUI）関連の処理 ---
 
 func startWebServer(g *Game, startPort int) int {
 	mux := http.NewServeMux()
 
-	// Static file server for SVG and other assets
 	embeddedFS := http.FileServer(http.FS(embedFS))
-	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			data, err := embedFS.ReadFile("dashboard.html")
 			if err != nil {
-				log.Printf("Error: Failed to read dashboard.html: %v\n", err)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				http.Error(w, "Not Found", http.StatusNotFound)
 				return
 			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Write(data)
-		} else {
-			embeddedFS.ServeHTTP(w, r)
+			return
 		}
-	}))
+		embeddedFS.ServeHTTP(w, r)
+	})
 
 	mux.HandleFunc("/api/data", func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		defer g.mu.Unlock()
 
-		data := map[string]interface{}{
-			"room":    g.roomName,
-			"speed":   g.baseSpeed,
-			"size":    g.fontSize,
-			"colors":  g.rawColorsString,
-			"outline": g.rawOutlineString,
-			"archive": g.archive,
+		mons := ebiten.AppendMonitors(nil)
+		type MonitorInfo struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(data)
+		infos := make([]MonitorInfo, len(mons))
+		for i, m := range mons {
+			mw, mh := m.Size()
+			infos[i] = MonitorInfo{fmt.Sprintf("%d", i), fmt.Sprintf("Display %d (%dx%d)", i+1, mw, mh)}
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"room":     g.roomName,
+			"speed":    g.baseSpeed,
+			"size":     g.fontSize,
+			"colors":   g.rawColorsString,
+			"outline":  g.rawOutlineString,
+			"display":  g.displayMode,
+			"windowX":  g.windowX,
+			"windowY":  g.windowY,
+			"monitors": infos,
+			"archive":  g.archive,
+		})
 	})
 
 	mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
 		var req SettingsRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
+		json.NewDecoder(r.Body).Decode(&req)
 		g.mu.Lock()
 
 		g.baseSpeed = req.Speed
 		g.fontColors = parseHexColors(req.Colors)
 		g.rawColorsString = req.Colors
-
-		outStr := strings.ToLower(strings.TrimSpace(req.Outline))
 		g.rawOutlineString = req.Outline
-		if outStr == "none" {
-			g.outlineColor = nil
-		} else if outStr == "black" {
-			g.outlineColor = color.Black
-		} else if outStr == "white" {
-			g.outlineColor = color.White
-		} else {
-			if c, err := parseHexColor(outStr); err == nil {
-				g.outlineColor = c
-			} else {
-				g.outlineColor = nil
-			}
-		}
+		g.outlineColor = parseOutline(req.Outline)
 
 		if req.Size != g.fontSize {
-			newFace, err := opentype.NewFace(g.fontTemplate, &opentype.FaceOptions{
-				Size:    float64(req.Size),
-				DPI:     72,
-				Hinting: font.HintingFull,
-			})
-			if err == nil {
-				g.mplusNormalFont = newFace
-				g.fontSize = req.Size
-			} else {
-				log.Printf("Error: Failed to change font size: %v\n", err)
-			}
+			f, _ := opentype.NewFace(g.fontTemplate, &opentype.FaceOptions{Size: float64(req.Size), DPI: 72})
+			g.mplusNormalFont = f
+			g.fontSize = req.Size
 		}
 
-		oldRoom := g.roomName
-		g.roomName = req.Room
-		if oldRoom != req.Room {
-			log.Printf("Info: Room settings have been changed [%s -> %s].\n", oldRoom, req.Room)
+		if req.Display != g.displayMode || req.WindowX != g.windowX || req.WindowY != g.windowY {
+			g.displayMode = req.Display
+			g.windowX = req.WindowX
+			g.windowY = req.WindowY
+			g.updateDisplay = true
+		}
+
+		if g.roomName != req.Room {
+			g.roomName = req.Room
 			if g.wsConn != nil {
 				g.wsConn.Close()
 			}
 		}
-
 		g.mu.Unlock()
-
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `{"status":"ok"}`)
 	})
 
 	mux.HandleFunc("/api/action", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
 		var req struct {
 			Action string `json:"action"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
+		json.NewDecoder(r.Body).Decode(&req)
 		g.mu.Lock()
 		if req.Action == "disconnect" {
-			oldRoom := g.roomName
 			g.roomName = ""
-			if oldRoom != "" && g.wsConn != nil {
-				log.Println("Info: Transitioning to idle state.")
+			if g.wsConn != nil {
 				g.wsConn.Close()
 			}
-		} else if req.Action == "quit" {
-			log.Println("Info: Quitting the application.")
+		}
+		if req.Action == "quit" {
 			g.shouldQuit = true
 		}
 		g.mu.Unlock()
-
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `{"status":"ok"}`)
 	})
 
 	mux.HandleFunc("/export", func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		defer g.mu.Unlock()
-
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-		w.Header().Set("Content-Disposition", "attachment; filename=\"comments_archive.csv\"")
-
-		// UTF-8 BOMを出力
 		w.Write([]byte{0xEF, 0xBB, 0xBF})
-
 		fmt.Fprintln(w, "Time,Comment")
-		for _, entry := range g.archive {
-			escapedComment := strings.ReplaceAll(entry.Comment, "\"", "\"\"")
-			fmt.Fprintf(w, "%s,\"%s\"\n", entry.Time, escapedComment)
+		for _, e := range g.archive {
+			fmt.Fprintf(w, "%s,\"%s\"\n", e.Time, strings.ReplaceAll(e.Comment, "\"", "\"\""))
 		}
 	})
 
 	var listener net.Listener
 	var err error
-	actualPort := startPort
-
+	port := startPort
 	for i := 0; i < 100; i++ {
-		addr := fmt.Sprintf("127.0.0.1:%d", actualPort)
-		listener, err = net.Listen("tcp", addr)
+		listener, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err == nil {
 			break
 		}
-		log.Printf("port: %d is in use. Trying the next port.", actualPort)
-		actualPort++
+		port++
 	}
-
-	if err != nil {
-		log.Fatalf("Not found available ports: %v", err)
-	}
-
-	log.Printf("Web UI is Running: http://127.0.0.1:%d\n", actualPort)
-
-	go func() {
-		if err := http.Serve(listener, mux); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start HTTP server: %v", err)
-		}
-	}()
-
-	return actualPort
+	go http.Serve(listener, mux)
+	return port
 }
 
-// --- ユーティリティ・パース関連 ---
+func parseOutline(s string) color.Color {
+	switch strings.ToLower(s) {
+	case "black":
+		return color.Black
+	case "white":
+		return color.White
+	case "none":
+		return nil
+	default:
+		c, err := parseHexColor(s)
+		if err == nil {
+			return c
+		}
+		return nil
+	}
+}
+
 func parseHexColor(s string) (c color.RGBA, err error) {
 	c.A = 0xff
 	if s[0] == '#' {
 		s = s[1:]
 	}
-
-	var r, g, b uint8
-	switch len(s) {
-	case 6:
-		_, err = fmt.Sscanf(s, "%02x%02x%02x", &r, &g, &b)
-		c.R = r
-		c.G = g
-		c.B = b
-	case 3:
-		_, err = fmt.Sscanf(s, "%1x%1x%1x", &r, &g, &b)
-		c.R = r * 17
-		c.G = g * 17
-		c.B = b * 17
-	default:
-		err = fmt.Errorf("invalid color format")
-	}
+	_, err = fmt.Sscanf(s, "%02x%02x%02x", &c.R, &c.G, &c.B)
 	return
 }
 
 func parseHexColors(s string) []color.Color {
 	parts := strings.Split(s, ",")
 	var colors []color.Color
-
 	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		c, err := parseHexColor(p)
-		if err == nil {
+		if c, err := parseHexColor(strings.TrimSpace(p)); err == nil {
 			colors = append(colors, c)
 		}
 	}
-
 	if len(colors) == 0 {
-		colors = append(colors, color.RGBA{255, 255, 255, 255})
+		colors = append(colors, color.White)
 	}
-
 	return colors
 }
 
 func openAppWindow(url string) {
-	var err error
-
-	switch runtime.GOOS {
-	case "windows":
-		err = exec.Command("cmd", "/c", "start", "msedge", "--app="+url).Start()
-		if err != nil {
-			err = exec.Command("cmd", "/c", "start", "chrome", "--app="+url).Start()
-		}
-	case "darwin":
-		err = exec.Command("open", "-n", "-a", "Google Chrome", "--args", "--app="+url).Start()
-	case "linux":
-		err = exec.Command("google-chrome", "--app="+url).Start()
+	cmd := "start"
+	if runtime.GOOS == "darwin" {
+		cmd = "open -n -a 'Google Chrome' --args --app="
 	}
-
-	if err != nil {
-		log.Printf("Failed to open application window. Opening %s in the default browser.", url)
-		switch runtime.GOOS {
-		case "linux":
-			exec.Command("xdg-open", url).Start()
-		case "windows":
-			exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-		case "darwin":
-			exec.Command("open", url).Start()
-		}
-	}
+	exec.Command("cmd", "/c", cmd, "msedge", "--app="+url).Start()
 }
 
 func main() {
-	roomPtr := flag.String("room", "", "接続するルーム名")
-	sizePtr := flag.Int("size", 48, "フォントの大きさ")
-	speedPtr := flag.Float64("speed", 4.0, "文字が進む基本速度")
-	colorsPtr := flag.String("colors", "#FFFFFF,#FF0000,#FFFF00,#00FF00,#00FFFF,#FF00FF", "文字色")
-	outlinePtr := flag.String("outline", "black", "文字の縁取り色 (none, black, white, または16進数)")
-	webPortPtr := flag.Int("port", 8080, "Web UIのポート番号")
+	roomPtr := flag.String("room", "", "Room name")
+	sizePtr := flag.Int("size", 48, "Font size")
+	speedPtr := flag.Float64("speed", 4.0, "Base speed")
+	colorsPtr := flag.String("colors", "#FFFFFF,#FF0000,#FFFF00,#00FF00,#00FFFF,#FF00FF", "Colors")
+	outlinePtr := flag.String("outline", "black", "Outline color")
+	displayPtr := flag.String("display", "all", "Display to show comments")
+	webPortPtr := flag.Int("port", 8080, "Web UI Port")
 
 	flag.Parse()
-
 	rand.Seed(time.Now().UnixNano())
-
-	fontColors := parseHexColors(*colorsPtr)
-
-	var outlineColor color.Color
-	outStr := strings.ToLower(strings.TrimSpace(*outlinePtr))
-	if outStr == "none" {
-		outlineColor = nil
-	} else if outStr == "black" {
-		outlineColor = color.Black
-	} else if outStr == "white" {
-		outlineColor = color.White
-	} else {
-		c, err := parseHexColor(outStr)
-		if err == nil {
-			outlineColor = c
-		} else {
-			outlineColor = nil
-		}
-	}
 
 	fontBytes, err := embedFS.ReadFile("MPLUS1p-Bold.ttf")
 	if err != nil {
-		log.Fatalf("Error: Failed to read font file: %v", err)
+		log.Fatalf("Error: %v", err)
 	}
 	tt, err := opentype.Parse(fontBytes)
 	if err != nil {
@@ -532,18 +484,23 @@ func main() {
 		mplusNormalFont:  mplusNormalFont,
 		fontTemplate:     tt,
 		fontSize:         *sizePtr,
-		fontColors:       fontColors,
-		outlineColor:     outlineColor,
+		fontColors:       parseHexColors(*colorsPtr),
+		outlineColor:     parseOutline(*outlinePtr),
 		roomName:         *roomPtr,
 		baseSpeed:        *speedPtr,
 		rawColorsString:  *colorsPtr,
 		rawOutlineString: *outlinePtr,
+		displayMode:      *displayPtr,
+		windowX:          0, // 初期化
+		windowY:          0, // 初期化
 		archive:          make([]LogEntry, 0),
 		shouldQuit:       false,
 	}
 
-	go game.listenWebSocket()
+	// ★起動時に全モニターの幅を合算してサイズを確定
+	game.initWindowSize()
 
+	go game.listenWebSocket()
 	actualPort := startWebServer(game, *webPortPtr)
 
 	if *roomPtr == "" {
@@ -558,9 +515,13 @@ func main() {
 	ebiten.SetWindowFloating(true)
 	ebiten.SetWindowMousePassthrough(true)
 
-	sw, sh := ebiten.Monitor().Size()
-	ebiten.SetWindowSize(sw, sh-1)
-	ebiten.SetWindowPosition(0, 0)
+	// ★ OSには「算出したピッタリのサイズ」を1度だけ伝える
+	ebiten.SetWindowSize(game.totalW, game.maxH-1)
+
+	// 初回のクリッピング領域計算
+	game.applyLogicalClip()
+	// Ebitengine原点誤認への対処（初期は0,0）
+	ebiten.SetWindowPosition(game.windowX, game.windowY)
 
 	options := &ebiten.RunGameOptions{
 		ScreenTransparent: true,
