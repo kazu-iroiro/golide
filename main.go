@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image"
 	"image/color"
 	"log"
 	"math/rand"
@@ -189,19 +190,22 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	clipRect := image.Rect(int(g.clipX), int(g.clipY), int(g.clipX+g.clipW), int(g.clipY+g.clipH))
+	clippedScreen := screen.SubImage(clipRect).(*ebiten.Image)
+
 	for _, c := range g.comments {
 		if g.outlineColor != nil {
 			x, y := int(c.X), int(c.Y)
-			text.Draw(screen, c.Text, g.mplusNormalFont, x-1, y-1, g.outlineColor)
-			text.Draw(screen, c.Text, g.mplusNormalFont, x+1, y-1, g.outlineColor)
-			text.Draw(screen, c.Text, g.mplusNormalFont, x-1, y+1, g.outlineColor)
-			text.Draw(screen, c.Text, g.mplusNormalFont, x+1, y+1, g.outlineColor)
-			text.Draw(screen, c.Text, g.mplusNormalFont, x, y-1, g.outlineColor)
-			text.Draw(screen, c.Text, g.mplusNormalFont, x, y+1, g.outlineColor)
-			text.Draw(screen, c.Text, g.mplusNormalFont, x-1, y, g.outlineColor)
-			text.Draw(screen, c.Text, g.mplusNormalFont, x+1, y, g.outlineColor)
+			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x-1, y-1, g.outlineColor)
+			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x+1, y-1, g.outlineColor)
+			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x-1, y+1, g.outlineColor)
+			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x+1, y+1, g.outlineColor)
+			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x, y-1, g.outlineColor)
+			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x, y+1, g.outlineColor)
+			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x-1, y, g.outlineColor)
+			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x+1, y, g.outlineColor)
 		}
-		text.Draw(screen, c.Text, g.mplusNormalFont, int(c.X), int(c.Y), c.Color)
+		text.Draw(clippedScreen, c.Text, g.mplusNormalFont, int(c.X), int(c.Y), c.Color)
 	}
 }
 
