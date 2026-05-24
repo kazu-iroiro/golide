@@ -447,11 +447,21 @@ func parseHexColors(s string) []color.Color {
 }
 
 func openAppWindow(url string) {
-	cmd := "start"
-	if runtime.GOOS == "darwin" {
-		cmd = "open -n -a 'Google Chrome' --args --app="
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", "msedge", "--app="+url)
+	default:
+		cmd = exec.Command("xdg-open", url)
 	}
-	exec.Command("cmd", "/c", cmd, "msedge", "--app="+url).Start()
+
+	err := cmd.Start()
+	if err != nil {
+		log.Printf("Failed to open browser: %v\n", err)
+	}
 }
 
 func main() {
