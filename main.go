@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -453,7 +454,22 @@ func openAppWindow(url string) {
 	case "darwin":
 		cmd = exec.Command("open", url)
 	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", "msedge", "--app="+url)
+		// Chrome
+		chromePath := `C:\Program Files\Google\Chrome\Application\chrome.exe`
+		if _, err := os.Stat(chromePath); err == nil {
+			exec.Command(chromePath, "--app="+url).Start()
+			return
+		}
+
+		// Edge
+		edgePath := `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`
+		if _, err := os.Stat(edgePath); err == nil {
+			exec.Command(edgePath, "--app="+url).Start()
+			return
+		}
+
+		// 既定のブラウザ
+		exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
 	default:
 		cmd = exec.Command("xdg-open", url)
 	}
