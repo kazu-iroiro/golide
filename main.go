@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ const (
 	reconnectShortSpan = 5 * time.Second
 	reconnectWaitTime  = 10 * time.Second
 	maxCommentLength   = 100
+	maxRecentEntries   = 1000 // メモリに保持する最新コメント数
 )
 
 type WsMessage struct {
@@ -62,7 +64,9 @@ type SettingsRequest struct {
 
 type Game struct {
 	comments        []Comment
-	archive         []LogEntry
+	recentArchive   []LogEntry // メモリに保持する最新コメント
+	archiveFile     *os.File   // アーカイブファイル
+	archiveFilePath string     // アーカイブファイルのパス
 	mu              sync.Mutex
 	mplusNormalFont font.Face
 	fontTemplate    *opentype.Font
@@ -151,6 +155,28 @@ func (g *Game) applyLogicalClip() {
 	}
 }
 
+// アーカイブファイルにコメントを追記
+func (g *Game) appendArchive(entry LogEntry) error {
+	if g.archiveFile == nil {
+		return fmt.Errorf("archive file not open")
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+	_, err = g.archiveFile.WriteString(string(data) + "\n")
+	return err
+}
+
+// メモリ内の最新コメントを管理（上限を超えたら古い物を削除）
+func (g *Game) addRecentArchive(entry LogEntry) {
+	g.recentArchive = append(g.recentArchive, entry)
+	if len(g.recentArchive) > maxRecentEntries {
+		// 古い方から削除
+		g.recentArchive = g.recentArchive[len(g.recentArchive)-maxRecentEntries:]
+	}
+}
+
 func (g *Game) Update() error {
 	g.mu.Lock()
 	quit := g.shouldQuit
@@ -173,6 +199,7 @@ func (g *Game) Update() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	// 画面内に残っているコメントだけを保持（メモリ効率化）
 	activeComments := g.comments[:0]
 	for _, c := range g.comments {
 		c.X -= c.Speed
@@ -258,9 +285,17 @@ func (g *Game) listenWebSocket() {
 					continue
 				}
 
-				g.mu.Lock()
 				nowStr := time.Now().Format("2006-01-02 15:04:05")
-				g.archive = append(g.archive, LogEntry{Time: nowStr, Comment: cleanComment})
+				entry := LogEntry{Time: nowStr, Comment: cleanComment}
+
+				// ファイルに追記（ロック外で実行）
+				if err := g.appendArchive(entry); err != nil {
+					log.Printf("Error writing archive: %v\n", err)
+				}
+
+				g.mu.Lock()
+				// メモリには最新分だけ保持
+				g.addRecentArchive(entry)
 
 				yRange := int(g.clipH) - g.fontSize*2
 				if yRange <= 0 {
@@ -325,7 +360,7 @@ func startWebServer(g *Game, startPort int) int {
 			"windowX":  g.windowX,
 			"windowY":  g.windowY,
 			"monitors": infos,
-			"archive":  g.archive,
+			"archive":  g.recentArchive,
 		})
 	})
 
@@ -383,13 +418,29 @@ func startWebServer(g *Game, startPort int) int {
 	})
 
 	mux.HandleFunc("/export", func(w http.ResponseWriter, r *http.Request) {
-		g.mu.Lock()
-		defer g.mu.Unlock()
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Write([]byte{0xEF, 0xBB, 0xBF})
 		fmt.Fprintln(w, "Time,Comment")
-		for _, e := range g.archive {
-			fmt.Fprintf(w, "%s,\"%s\"\n", e.Time, strings.ReplaceAll(e.Comment, "\"", "\"\""))
+
+		// ファイルから全てのエントリを読み込んで出力
+		g.mu.Lock()
+		archiveFilePath := g.archiveFilePath
+		g.mu.Unlock()
+
+		if archiveFilePath != "" {
+			data, err := os.ReadFile(archiveFilePath)
+			if err == nil {
+				lines := strings.Split(string(data), "\n")
+				for _, line := range lines {
+					if strings.TrimSpace(line) == "" {
+						continue
+					}
+					var entry LogEntry
+					if err := json.Unmarshal([]byte(line), &entry); err == nil {
+						fmt.Fprintf(w, "%s,\"%s\"\n", entry.Time, strings.ReplaceAll(entry.Comment, "\"", "\"\""))
+					}
+				}
+			}
 		}
 	})
 
@@ -510,6 +561,15 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// アーカイブファイルをセットアップ
+	tempDir := filepath.Join(os.TempDir(), "golide_archive")
+	os.MkdirAll(tempDir, 0755)
+	archiveFilePath := filepath.Join(tempDir, "archive.jsonl")
+	archiveFile, err := os.OpenFile(archiveFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Fatalf("Failed to open archive file: %v", err)
+	}
+
 	game := &Game{
 		mplusNormalFont:  mplusNormalFont,
 		fontTemplate:     tt,
@@ -523,7 +583,9 @@ func main() {
 		displayMode:      *displayPtr,
 		windowX:          0, // 初期化
 		windowY:          0, // 初期化
-		archive:          make([]LogEntry, 0),
+		recentArchive:    make([]LogEntry, 0),
+		archiveFile:      archiveFile,
+		archiveFilePath:  archiveFilePath,
 		shouldQuit:       false,
 	}
 
@@ -559,5 +621,10 @@ func main() {
 
 	if err := ebiten.RunGameWithOptions(game, options); err != nil {
 		log.Fatal(err)
+	}
+
+	// クリーンアップ
+	if game.archiveFile != nil {
+		game.archiveFile.Close()
 	}
 }
