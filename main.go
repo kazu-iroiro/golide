@@ -205,8 +205,9 @@ func (g *Game) Update() error {
 		c.X -= c.Speed
 		textWidth := float64(len([]rune(c.Text)) * g.fontSize)
 
-		// ウィンドウ内部の論理的な左端（clipX）を越えるまで生存させる
-		if c.X+textWidth > g.clipX {
+		// クリップ領域内に見えるコメントだけを保持
+		// 条件: コメント右端 > クリップ左端 AND コメント左端 < クリップ右端
+		if c.X+textWidth > g.clipX && c.X < g.clipX+g.clipW {
 			activeComments = append(activeComments, c)
 		}
 	}
