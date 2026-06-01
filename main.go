@@ -63,14 +63,16 @@ type SettingsRequest struct {
 }
 
 type Game struct {
-	comments        []Comment
-	recentArchive   []LogEntry // メモリに保持する最新コメント
-	archiveFile     *os.File   // アーカイブファイル
-	archiveFilePath string     // アーカイブファイルのパス
-	mu              sync.Mutex
-	mplusNormalFont font.Face
-	fontTemplate    *opentype.Font
-	wsConn          *websocket.Conn
+	comments          []Comment
+	recentArchive     []LogEntry // メモリに保持する最新コメント
+	archiveFile       *os.File   // アーカイブファイル
+	archiveFilePath   string     // アーカイブファイルのパス
+	mu                sync.Mutex
+	mplusNormalFont   font.Face
+	fontTemplate      *opentype.Font
+	notoEmojiFontFace font.Face
+	notoEmojiFontTmpl *opentype.Font
+	wsConn            *websocket.Conn
 
 	fontSize         int
 	fontColors       []color.Color
@@ -224,23 +226,57 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 	for _, c := range g.comments {
 		if g.outlineColor != nil {
-			x, y := int(c.X), int(c.Y)
-			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x-1, y-1, g.outlineColor)
-			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x+1, y-1, g.outlineColor)
-			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x-1, y+1, g.outlineColor)
-			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x+1, y+1, g.outlineColor)
-			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x, y-1, g.outlineColor)
-			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x, y+1, g.outlineColor)
-			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x-1, y, g.outlineColor)
-			text.Draw(clippedScreen, c.Text, g.mplusNormalFont, x+1, y, g.outlineColor)
+			g.drawTextWithOutline(clippedScreen, c.Text, int(c.X), int(c.Y), g.outlineColor)
 		}
-		text.Draw(clippedScreen, c.Text, g.mplusNormalFont, int(c.X), int(c.Y), c.Color)
+		g.drawTextWithFallback(clippedScreen, c.Text, int(c.X), int(c.Y), c.Color)
 	}
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	// ebiten側から算出したピッタリのサイズを維持する
 	return g.totalW, g.maxH
+}
+
+func (g *Game) isEmojiOrSymbol(r rune) bool {
+	// 絵文字とシンボルのUnicode範囲
+	return (r >= 0x1F300 && r <= 0x1F9FF) || // 絵文字メイン
+		(r >= 0x2300 && r <= 0x23FF) || // その他の技術シンボル
+		(r >= 0x2600 && r <= 0x27BF) || // その他の記号と矢印
+		(r >= 0x2B50 && r <= 0x2B55) || // 星記号
+		(r >= 0xFE00 && r <= 0xFE0F) || // 異字セレクタ
+		(r >= 0x1F900 && r <= 0x1F9FF) // 補足絵文字
+}
+
+func (g *Game) drawTextWithFallback(screen *ebiten.Image, str string, x, y int, clr color.Color) {
+	// テキストを文字ごとに処理し、フォント分岐
+	runes := []rune(str)
+	currentX := float64(x)
+
+	for _, r := range runes {
+		var face font.Face
+		if g.isEmojiOrSymbol(r) {
+			face = g.notoEmojiFontFace
+		} else {
+			face = g.mplusNormalFont
+		}
+		text.Draw(screen, string(r), face, int(currentX), y, clr)
+
+		// 次の文字のX位置を計算（Advanceを使用）
+		advance, _ := face.GlyphAdvance(r)
+		currentX += float64(advance >> 6)
+	}
+}
+
+func (g *Game) drawTextWithOutline(screen *ebiten.Image, str string, x, y int, clr color.Color) {
+	// アウトラインを描画（8方向）
+	for dx := -1; dx <= 1; dx++ {
+		for dy := -1; dy <= 1; dy++ {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			g.drawTextWithFallback(screen, str, x+dx, y+dy, clr)
+		}
+	}
 }
 
 func sanitizeComment(s string) string {
@@ -379,6 +415,8 @@ func startWebServer(g *Game, startPort int) int {
 		if req.Size != g.fontSize {
 			f, _ := opentype.NewFace(g.fontTemplate, &opentype.FaceOptions{Size: float64(req.Size), DPI: 72})
 			g.mplusNormalFont = f
+			notoF, _ := opentype.NewFace(g.notoEmojiFontTmpl, &opentype.FaceOptions{Size: float64(req.Size), DPI: 72})
+			g.notoEmojiFontFace = notoF
 			g.fontSize = req.Size
 		}
 
@@ -562,6 +600,24 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Noto Emoji フォントの読み込み
+	notoEmojiBytes, err := embedFS.ReadFile("NotoEmoji-VariableFont_wght.ttf")
+	if err != nil {
+		log.Fatalf("Error reading Noto Emoji font: %v", err)
+	}
+	notoEmojiTmpl, err := opentype.Parse(notoEmojiBytes)
+	if err != nil {
+		log.Fatalf("Error parsing Noto Emoji font: %v", err)
+	}
+	notoEmojiFont, err := opentype.NewFace(notoEmojiTmpl, &opentype.FaceOptions{
+		Size:    float64(*sizePtr),
+		DPI:     72,
+		Hinting: font.HintingFull,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// アーカイブファイルをセットアップ
 	tempDir := filepath.Join(os.TempDir(), "golide_archive")
 	os.MkdirAll(tempDir, 0755)
@@ -572,22 +628,24 @@ func main() {
 	}
 
 	game := &Game{
-		mplusNormalFont:  mplusNormalFont,
-		fontTemplate:     tt,
-		fontSize:         *sizePtr,
-		fontColors:       parseHexColors(*colorsPtr),
-		outlineColor:     parseOutline(*outlinePtr),
-		roomName:         *roomPtr,
-		baseSpeed:        *speedPtr,
-		rawColorsString:  *colorsPtr,
-		rawOutlineString: *outlinePtr,
-		displayMode:      *displayPtr,
-		windowX:          0, // 初期化
-		windowY:          0, // 初期化
-		recentArchive:    make([]LogEntry, 0),
-		archiveFile:      archiveFile,
-		archiveFilePath:  archiveFilePath,
-		shouldQuit:       false,
+		mplusNormalFont:   mplusNormalFont,
+		fontTemplate:      tt,
+		notoEmojiFontFace: notoEmojiFont,
+		notoEmojiFontTmpl: notoEmojiTmpl,
+		fontSize:          *sizePtr,
+		fontColors:        parseHexColors(*colorsPtr),
+		outlineColor:      parseOutline(*outlinePtr),
+		roomName:          *roomPtr,
+		baseSpeed:         *speedPtr,
+		rawColorsString:   *colorsPtr,
+		rawOutlineString:  *outlinePtr,
+		displayMode:       *displayPtr,
+		windowX:           0, // 初期化
+		windowY:           0, // 初期化
+		recentArchive:     make([]LogEntry, 0),
+		archiveFile:       archiveFile,
+		archiveFilePath:   archiveFilePath,
+		shouldQuit:        false,
 	}
 
 	// ★起動時に全モニターの幅を合算してサイズを確定

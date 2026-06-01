@@ -17,7 +17,12 @@
 ### ビルド済みのバイナリを使用する場合
 
 ``` sh
-.\main.exe
+# amd64の場合
+.\golide_windows_amd64.exe
+
+# arm64の場合
+.\golide_windows_arm64.exe
+
 ```
 
 ### Goを自分でビルドする場合
@@ -35,7 +40,7 @@ go run main.go embeds.go
 ## 実行時のオプション
 
 ``` sh
-.\main.exe -h
+.\golide_windows_amd64.exe -h
 ```
 
 または
